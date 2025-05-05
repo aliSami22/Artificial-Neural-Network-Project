@@ -48,7 +48,9 @@ user_vals = user_input()
 # تحويل المدخلات
 input_df = pd.DataFrame([user_vals])
 for col, le in label_encoders.items():
-    input_df[col] = le.transform(input_df[col])
+    val = input_df[col].values[0]
+    input_df[col] = le.transform([val])
+
 
 input_scaled = scaler.transform(input_df)
 
