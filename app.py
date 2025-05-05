@@ -1,66 +1,67 @@
-import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 from minisom import MiniSom
+import streamlit as st
 
 # تحميل البيانات
-df = pd.read_csv("Egypt_Houses_Price.csv")
+df = pd.read_csv('Egypt_Houses_Price.csv')
 
-# إسقاط أي أعمدة غير مفيدة
-df.dropna(inplace=True)
+# تحديد الأعمدة المهمة
+columns_to_use = ['Type', 'Price', 'Bedrooms', 'Bathrooms', 'Area', 'Furnished', 'Level', 'Compound', 'Payment_Option', 'Delivery_Term', 'City']
+df = df[columns_to_use].dropna()
 
-# حدد الأعمدة المستخدمة في التدريب
-features = ['rooms', 'area']
-target = 'price'
+# تشفير البيانات النصية
+label_encoders = {}
+for col in df.select_dtypes(include='object').columns:
+    le = LabelEncoder()
+    df[col] = le.fit_transform(df[col])
+    label_encoders[col] = le
 
-# التأكد من أن الأعمدة موجودة
-if not all(col in df.columns for col in features + [target]):
-    st.error("البيانات لا تحتوي على الأعمدة المطلوبة.")
-    st.stop()
-
-# تجهيز البيانات
-X = df[features].values
-y = df[target].values
-
+# تطبيع البيانات
 scaler = MinMaxScaler()
-X_scaled = scaler.fit_transform(X)
+data_scaled = scaler.fit_transform(df.drop('Price', axis=1))
 
 # تدريب SOM
-som = MiniSom(x=10, y=10, input_len=X.shape[1], sigma=1.0, learning_rate=0.5)
-som.random_weights_init(X_scaled)
-som.train_random(X_scaled, 100)
+som = MiniSom(10, 10, data_scaled.shape[1], sigma=0.5, learning_rate=0.5)
+som.random_weights_init(data_scaled)
+som.train_random(data_scaled, 100)
 
 # واجهة Streamlit
 st.title("تحليل أسعار العقارات في مصر باستخدام SOM")
 
-st.header("أدخل مواصفات العقار الجديد:")
-room_input = st.number_input("عدد الغرف", min_value=1, step=1)
-area_input = st.number_input("المساحة (متر مربع)", min_value=20, step=10)
+# مدخلات المستخدم
+st.sidebar.header("أدخل خصائص العقار")
 
-if st.button("تقدير السعر و عرض أقرب حالة"):
+def user_input():
+    input_data = {}
+    for col in df.drop('Price', axis=1).columns:
+        if col in label_encoders:
+            options = list(label_encoders[col].classes_)
+            input_data[col] = st.sidebar.selectbox(col, options)
+        else:
+            input_data[col] = st.sidebar.number_input(col, min_value=0)
+    return input_data
 
-    # تجهيز الإدخال
-    input_data = scaler.transform([[room_input, area_input]])
+user_vals = user_input()
 
-    # الحصول على الخلية الأقرب في SOM
-    winner = som.winner(input_data[0])
+# تحويل المدخلات
+input_df = pd.DataFrame([user_vals])
+for col, le in label_encoders.items():
+    input_df[col] = le.transform(input_df[col])
 
-    # إيجاد أقرب نقطة في الداتا
-    distances = []
-    for i, x in enumerate(X_scaled):
-        if som.winner(x) == winner:
-            dist = np.linalg.norm(x - input_data[0])
-            distances.append((dist, i))
+input_scaled = scaler.transform(input_df)
 
-    if not distances:
-        st.warning("لا توجد حالة مشابهة في الخريطة.")
-    else:
-        # أقرب نقطة
-        _, best_index = sorted(distances)[0]
-        predicted_price = y[best_index]
+# إيجاد أقرب عقدة
+winner = som.winner(input_scaled[0])
+similar_indexes = [i for i, x in enumerate(data_scaled) if som.winner(x) == winner]
 
-        st.success(f"🔮 السعر المتوقع: {predicted_price:,.2f} جنيه مصري")
+# عرض النتائج
+st.subheader("عقارات مشابهة")
+similar_properties = df.iloc[similar_indexes]
+similar_properties['Price'] = df['Price'].iloc[similar_indexes].values
+st.dataframe(similar_properties.head(10))
 
-        st.subheader("📌 أقرب حالة مشابهة:")
-        st.write(df.iloc[best_index])
+# السعر المتوقع
+predicted_price = similar_properties['Price'].mean()
+st.subheader(f"السعر المتوقع: {predicted_price:,.0f} جنيه")
